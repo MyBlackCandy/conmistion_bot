@@ -6,26 +6,23 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from psycopg2.extras import RealDictCursor
 from db import init_db, get_db_connection, get_group_config
 
-# --- 检查访问权限与时间 ---
+# --- 权限校验 ---
 def get_status(user_id, chat_id):
     role, expiry, tz_off = get_group_config(chat_id, user_id)
-    # Master 拥有全权限
     if str(user_id) == os.getenv("MASTER_ID", "0"): 
         return True, "管理员 (无限制)", tz_off
     if not expiry: return False, "未获得本项目授权", tz_off
     now_utc = datetime.now(timezone.utc)
     if now_utc > expiry: return False, "本项目已到期", tz_off
     diff = expiry - now_utc
-    days = diff.days
-    hours = diff.seconds // 3600
-    return True, f"{days}天 {hours}小时", tz_off
+    return True, f"{diff.days}天 {diff.seconds // 3600}小时", tz_off
 
-# --- 辅助: 转换中文线名 ---
+# --- 辅助: 中文名 ---
 def get_line_name(n):
     lines = ["", "一线", "二线", "三线", "四线", "五线", "六线", "七线", "八线", "九线", "十线"]
     return lines[n] if n < len(lines) else f"{n}线"
 
-# --- 指令: 提成报表 (2x2 格式) ---
+# --- 指令: 提成报表 (UI 优化版) ---
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
     active, _, tz_off = get_status(user_id, chat_id)
@@ -35,66 +32,50 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     month_query, month_display = now_local.strftime("%Y-%m"), f"{now_local.year}年{now_local.month}月"
     
     try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month_query}%"))
-        rows = cur.fetchall()
-        conn.close()
+        rows = cur.fetchall(); conn.close()
         
-        if not rows: 
-            return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
+        if not rows: return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
 
-        hist_header = f"📋 **{month_display} 提成**\n{'━'*15}\n"
-        person_sum, hist_body = {}, ""
-
+        # --- Header ---
+        msg = f"📋 **{month_display} 提成报表**\n"
+        msg += f"━━━━━━━━━━━━━━━\n\n"
+        
+        person_sum = {}
         for r in rows:
-            # 第一行: 日期 | 计算 = 净值
-            hist_body += f"🔹 `{r['date']}` | {float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}% = **{float(r['net_amount']):,.2f}**\n"
+            # รายการบันทึก
+            msg += f"🗓 `{r['date']}`\n"
+            msg += f"💰 `Net: {float(r['net_amount']):,.2f}` | ({float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}%)\n"
+            
             line_entries = []
             for d in r['details']:
                 name, l_cn, comm = d['name'], get_line_name(d['line']), float(d['comm'])
                 line_entries.append(f"{name}({l_cn}):{comm:,.2f}")
                 if name not in person_sum: person_sum[name] = {}
                 person_sum[name][l_cn] = person_sum[name].get(l_cn, 0) + comm
-            # 第二行: 成员摘要
-            hist_body += f"└ {', '.join(line_entries)}\n"
+            
+            msg += f"└ 👤 {', '.join(line_entries)}\n"
+            msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
 
-        summ_header = f"\n👤 **个人汇总**\n{'━'*15}\n"
-        summ_body = ""
+        # --- Summary Section ---
+        msg += f"\n👤 **个人汇总 (Total Summary)**\n"
+        msg += f"━━━━━━━━━━━━━━━\n"
+        
         for name in sorted(person_sum.keys()):
             total = sum(person_sum[name].values())
-            summ_body += f"📌 **{name}** | 总计: `{total:,.2f}`\n"
-            lines_info = [f"{l}:{v:,.2f}" for l, v in sorted(person_sum[name].items())]
-            summ_body += f"└ {', '.join(lines_info)}\n"
+            msg += f"📌 **{name}**\n"
+            msg += f"   Total: `{total:,.2f}`\n"
+            lines_info = [f"{l}: {v:,.2f}" for l, v in sorted(person_sum[name].items())]
+            msg += f"   └ {', '.join(lines_info)}\n"
+        
+        msg += f"━━━━━━━━━━━━━━━"
+        await update.message.reply_text(msg, parse_mode='Markdown')
 
-        await update.message.reply_text(hist_header + hist_body + summ_header + summ_body, parse_mode='Markdown')
     except Exception as e:
         print(f"Report Error: {e}")
 
-# --- 指令: 撤销最后一次记录 (Undo) ---
-async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id, chat_id = update.effective_user.id, update.effective_chat.id
-    role, _, _ = get_group_config(chat_id, user_id)
-    if str(user_id) != os.getenv("MASTER_ID", "0") and role != "owner":
-        return
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT id, net_amount FROM sales WHERE chat_id = %s ORDER BY id DESC LIMIT 1", (chat_id,))
-        last_rec = cur.fetchone()
-        if last_rec:
-            cur.execute("DELETE FROM sales WHERE id = %s", (last_rec['id'],))
-            conn.commit()
-            await update.message.reply_text(f"🗑️ **已撤销最后一条记录**\n金额: `{float(last_rec['net_amount']):,.2f}`")
-            await report(update, context) 
-        else:
-            await update.message.reply_text("📭 本群暂无可撤销的记录")
-        conn.close()
-    except:
-        await update.message.reply_text("❌ 撤销失败")
-
-# --- 记录处理 ---
+# --- 记录处理 (UI 优化版) ---
 async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
     active, time_left, tz_off = get_status(user_id, chat_id)
@@ -107,12 +88,13 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw, rate, fee_val = float(p[0]), float(p[1]), float(p[2].replace('%',''))
         net = (raw / rate) * (1 - (fee_val/100))
         details, line_summaries = [], []
+        
         for i in range(0, len(p[3:]), 2):
             line_no = (i//2) + 1
             name, comm_p = p[3+i], float(p[4+i].replace('%',''))
             comm_amt, l_cn = net * (comm_p / 100), get_line_name(line_no)
             details.append({"line": line_no, "name": name, "comm": comm_amt})
-            line_summaries.append(f"👤 {name} ({l_cn}): `{comm_amt:,.2f}`")
+            line_summaries.append(f"   {l_cn} | {name}: `{comm_amt:,.2f}`")
         
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
         conn = get_db_connection(); cur = conn.cursor()
@@ -120,10 +102,38 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", (raw, rate, fee_val, net, json.dumps(details), l_date, user_id, chat_id))
         conn.commit(); conn.close()
 
-        res_msg = (f"✅ **录入成功**\n💰 净值: `{net:,.2f}`\n📊 计算: `{raw:,.0f}/{rate}-{fee_val}%` \n"
-                   f"━━━━━━━━━━━━━━━\n" + "\n".join(line_summaries) + f"\n━━━━━━━━━━━━━━━\n⏳ 剩余: {time_left}")
+        res_msg = (
+            f"✅ **录入成功**\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📊 公式: `{raw:,.0f} ÷ {rate} - {fee_val}%` \n"
+            f"💰 净入: `{net:,.2f}`\n"
+            f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+            + "\n".join(line_summaries) + 
+            f"\n━━━━━━━━━━━━━━━\n"
+            f"⏳ 授权剩余: {time_left}"
+        )
         await update.message.reply_text(res_msg, parse_mode='Markdown')
         await report(update, context)
+        
+    except Exception as e:
+        print(f"Handle Plus Error: {e}")
+
+# --- 撤销 Undo ---
+async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id, chat_id = update.effective_user.id, update.effective_chat.id
+    role, _, _ = get_group_config(chat_id, user_id)
+    if str(user_id) != os.getenv("MASTER_ID", "0") and role != "owner": return
+
+    try:
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT id, net_amount FROM sales WHERE chat_id = %s ORDER BY id DESC LIMIT 1", (chat_id,))
+        last_rec = cur.fetchone()
+        if last_rec:
+            cur.execute("DELETE FROM sales WHERE id = %s", (last_rec['id'],))
+            conn.commit()
+            await update.message.reply_text(f"🗑️ **已撤销成功**\n金额: `{float(last_rec['net_amount']):,.2f}`")
+            await report(update, context) 
+        conn.close()
     except: pass
 
 # --- อื่นๆ (set_days, set_tz, myid) ---
@@ -138,7 +148,7 @@ async def set_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_exp = base + timedelta(days=days)
         cur.execute("INSERT INTO group_permissions (chat_id, user_id, role, expiry_timestamp) VALUES (%s,%s,'user',%s) ON CONFLICT (chat_id, user_id) DO UPDATE SET expiry_timestamp=%s", (chat_id, target_id, new_exp, new_exp))
         conn.commit(); conn.close()
-        await update.message.reply_text(f"✅ 充值成功 | {new_exp.strftime('%Y-%m-%d')}")
+        await update.message.reply_text(f"✅ 成功 | {new_exp.strftime('%Y-%m-%d')}")
     except: pass
 
 async def set_tz(update: Update, context: ContextTypes.DEFAULT_TYPE):
