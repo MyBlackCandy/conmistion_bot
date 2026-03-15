@@ -86,31 +86,42 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active, _, tz_off = get_status(user_id, chat_id)
     if not active: return
 
-    month = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m")
+    now_local = datetime.now(timezone(timedelta(hours=tz_off)))
+    month_query = now_local.strftime("%Y-%m")
+    month_display = f"{now_local.year}年{now_local.month}月"
+    
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month}%"))
+    cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month_query}%"))
     rows = cur.fetchall(); conn.close()
     
-    if not rows: return await update.message.reply_text(f"📊 {month} | 暂无记录")
+    if not rows: return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
 
-    hist_header = f"📋 **{month} 财务记录**\n{'━'*15}\n"
+    hist_header = f"📋 **{month_display} **\n{'━'*15}\n"
     person_sum = {}; hist_body = ""
 
     for r in rows:
+        # บรรทัดที่ 1: แสดง Net เป็นทศนิยม 2 ตำแหน่ง
         hist_body += f"🔹 `{r['date']}` | {float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}% = **{float(r['net_amount']):,.2f}**\n"
+        
         line_entries = []
         for d in r['details']:
             name, l_no, comm = d['name'], d['line'], float(d['comm'])
-            line_entries.append(f"{name}(L{l_no}):{comm:,.0f}")
+            # บรรทัดที่ 2: แสดงค่าคอมฯ เป็นทศนิยม 2 ตำแหน่ง
+            line_entries.append(f"{name}(L{l_no}):{comm:,.2f}")
+            
             if name not in person_sum: person_sum[name] = {}
             person_sum[name][f"L{l_no}"] = person_sum[name].get(f"L{l_no}", 0) + comm
+        
         hist_body += f"└ {', '.join(line_entries)}\n"
 
     summ_header = f"\n👤 **个人汇总**\n{'━'*15}\n"
     summ_body = ""
     for name in sorted(person_sum.keys()):
         total_amt = sum(person_sum[name].values())
+        # สรุปรายคน: แสดงยอดรวม 2 ตำแหน่ง
         summ_body += f"📌 **{name}** | 总计: `{total_amt:,.2f}`\n"
+        
+        # รายละเอียด Line: แสดง 2 ตำแหน่ง
         lines_info = [f"{l}:{v:,.2f}" for l, v in sorted(person_sum[name].items())]
         summ_body += f"└ {', '.join(lines_info)}\n"
 
@@ -121,6 +132,7 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
     active, time_left, tz_off = get_status(user_id, chat_id)
     if not active: return
+    
     text = update.message.text.strip()
     if not text.startswith('+'): return
     
@@ -128,12 +140,14 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p = text[1:].split()
         raw, rate, fee_val = float(p[0]), float(p[1]), float(p[2].replace('%',''))
         net = (raw / rate) * (1 - (fee_val/100))
+        
         details = []; line_summaries = []
         for i in range(0, len(p[3:]), 2):
             line_no = (i//2) + 1
             name, comm_p = p[3+i], float(p[4+i].replace('%',''))
             comm_amt = net * (comm_p / 100)
             details.append({"line": line_no, "name": name, "comm": comm_amt})
+            # แสดงผลตอนตอบกลับทันทีเป็น 2 ตำแหน่ง
             line_summaries.append(f"👤 {name} (L{line_no}): `{comm_amt:,.2f}`")
         
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
@@ -142,8 +156,18 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (raw, rate, fee_val, net, json.dumps(details), l_date, user_id, chat_id))
         conn.commit(); conn.close()
 
-        response = (f"✅ **录入成功**\n💰 净值: `{net:,.2f}`\n📊 计算: `{raw:,.0f}/{rate}-{fee_val}%` \n━━━━━━━━━━━━━━━\n" + "\n".join(line_summaries) + f"\n━━━━━━━━━━━━━━━\n⏳ 剩余: {time_left}")
+        # ปรับยอด Net ในข้อความตอบกลับเป็น 2 ตำแหน่ง
+        response = (
+            f"✅ **录入成功**\n"
+            f"💰 净值: `{net:,.2f}`\n"
+            f"📊 计算: `{raw:,.0f}/{rate}-{fee_val}%` \n"
+            f"━━━━━━━━━━━━━━━\n"
+            + "\n".join(line_summaries) + "\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"⏳ 剩余: {time_left}"
+        )
         await update.message.reply_text(response, parse_mode='Markdown')
+        await update.message.reply_text(hist_header + hist_body + summ_header + summ_body, parse_mode='Markdown')
     except: pass
 
 if __name__ == '__main__':
