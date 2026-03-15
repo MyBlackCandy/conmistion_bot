@@ -9,21 +9,41 @@ from db import init_db, get_db_connection, get_group_config
 # --- 检查访问权限与时间 (基于群组) ---
 def get_status(user_id, chat_id):
     role, expiry, tz_off = get_group_config(chat_id, user_id)
-    
-    # MASTER 拥有全权限，不受有效期限制
     if str(user_id) == os.getenv("MASTER_ID", "0"): 
         return True, "管理员 (无限制)", tz_off
-    
     if not expiry: return False, "未获得本项目授权", tz_off
-    
     now_utc = datetime.now(timezone.utc)
     if now_utc > expiry: return False, "本项目已到期", tz_off
-    
     diff = expiry - now_utc
     days = diff.days
     hours, rem = divmod(diff.seconds, 3600)
     minutes, _ = divmod(rem, 60)
     return True, f"{days}天 {hours}小时 {minutes}分", tz_off
+
+# --- 指令: 撤销最后一次记录 (Undo) ---
+async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id, chat_id = update.effective_user.id, update.effective_chat.id
+    # 仅限管理员或拥有者使用 (在这里判断 Master 或 Role)
+    role, _, _ = get_group_config(chat_id, user_id)
+    if str(user_id) != os.getenv("MASTER_ID", "0") and role != "owner":
+        return
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        # 查找本群最后一条记录
+        cur.execute("SELECT id, net_amount FROM sales WHERE chat_id = %s ORDER BY id DESC LIMIT 1", (chat_id,))
+        last_rec = cur.fetchone()
+        
+        if last_rec:
+            cur.execute("DELETE FROM sales WHERE id = %s", (last_rec['id'],))
+            conn.commit()
+            await update.message.reply_text(f"🗑️ **已撤销最后一条记录**\n金额: `{float(last_rec['net_amount']):,.2f}`\n状态: 已从数据库删除")
+        else:
+            await update.message.reply_text("📭 本群暂无可撤销的记录")
+        conn.close()
+    except Exception as e:
+        await update.message.reply_text(f"❌ 撤销失败: {e}")
 
 # --- 指令: 为特定群组的用户充值 ---
 async def set_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -32,20 +52,17 @@ async def set_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         target_id, days = int(context.args[0]), float(context.args[1])
         now_utc = datetime.now(timezone.utc)
-        
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT expiry_timestamp FROM group_permissions WHERE chat_id=%s AND user_id=%s", (chat_id, target_id))
         res = cur.fetchone()
-        
         base = res[0] if res and res[0] and res[0] > now_utc else now_utc
         new_exp = base + timedelta(days=days)
-        
         cur.execute("""INSERT INTO group_permissions (chat_id, user_id, role, expiry_timestamp) 
                        VALUES (%s,%s,'user',%s) 
                        ON CONFLICT (chat_id, user_id) DO UPDATE SET expiry_timestamp=%s""", 
                     (chat_id, target_id, new_exp, new_exp))
         conn.commit(); conn.close()
-        await update.message.reply_text(f"✅ 充值成功\n群组ID: `{chat_id}`\n用户ID: `{target_id}`\n到期时间: `{new_exp.strftime('%Y-%m-%d %H:%M')} UTC`")
+        await update.message.reply_text(f"✅ 充值成功\n到期时间: `{new_exp.strftime('%Y-%m-%d %H:%M')} UTC`")
     except: await update.message.reply_text("💡 格式: `/set_days [用户ID] [天数]`")
 
 # --- 指令: 设置当前群组时区 ---
@@ -63,53 +80,37 @@ async def set_tz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ 本群时区已更新为: GMT {offset:+}")
     except: await update.message.reply_text("💡 格式: `/set_tz [小时]`")
 
-# --- 指令: 仅看本群报表 (严格 2 2 行格式) ---
+# --- 指令: 报表 (2x2 格式) ---
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
     active, _, tz_off = get_status(user_id, chat_id)
-    
     if not active: return
 
     month = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m")
-    
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month}%"))
-    rows = cur.fetchall()
-    conn.close()
+    rows = cur.fetchall(); conn.close()
     
-    if not rows: 
-        return await update.message.reply_text(f"📊 {month} | 暂无记录")
+    if not rows: return await update.message.reply_text(f"📊 {month} | 暂无记录")
 
     hist_header = f"📋 **{month} 财务记录**\n{'━'*15}\n"
-    person_sum = {}
-    hist_body = ""
+    person_sum = {}; hist_body = ""
 
-    # --- ส่วนที่ 1: ประวัติการบันทึก (2 บรรทัดต่อรายการ) ---
     for r in rows:
-        # 1. 第一行：日期 | 计算公式 = 净值
         hist_body += f"🔹 `{r['date']}` | {float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}% = **{float(r['net_amount']):,.2f}**\n"
-        
         line_entries = []
         for d in r['details']:
             name, l_no, comm = d['name'], d['line'], float(d['comm'])
             line_entries.append(f"{name}(L{l_no}):{comm:,.0f}")
-            
             if name not in person_sum: person_sum[name] = {}
             person_sum[name][f"L{l_no}"] = person_sum[name].get(f"L{l_no}", 0) + comm
-        
-        # 2. 第二行：成员摘要
         hist_body += f"└ {', '.join(line_entries)}\n"
 
-    # --- ส่วนที่ 2: สรุปรายคน (2 บรรทัดต่อคน) ---
     summ_header = f"\n👤 **个人汇总**\n{'━'*15}\n"
     summ_body = ""
     for name in sorted(person_sum.keys()):
         total_amt = sum(person_sum[name].values())
-        # 1. 第一行：姓名 | 总计
         summ_body += f"📌 **{name}** | 总计: `{total_amt:,.2f}`\n"
-        
-        # 2. 第二行：各线详情
         lines_info = [f"{l}:{v:,.2f}" for l, v in sorted(person_sum[name].items())]
         summ_body += f"└ {', '.join(lines_info)}\n"
 
@@ -119,9 +120,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
     active, time_left, tz_off = get_status(user_id, chat_id)
-    
     if not active: return
-
     text = update.message.text.strip()
     if not text.startswith('+'): return
     
@@ -129,9 +128,7 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p = text[1:].split()
         raw, rate, fee_val = float(p[0]), float(p[1]), float(p[2].replace('%',''))
         net = (raw / rate) * (1 - (fee_val/100))
-        
-        details = []
-        line_summaries = []
+        details = []; line_summaries = []
         for i in range(0, len(p[3:]), 2):
             line_no = (i//2) + 1
             name, comm_p = p[3+i], float(p[4+i].replace('%',''))
@@ -141,26 +138,18 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
         conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("""INSERT INTO sales (raw_amount, ex_rate, fee, net_amount, details, date, added_by, chat_id) 
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+        cur.execute("INSERT INTO sales (raw_amount, ex_rate, fee, net_amount, details, date, added_by, chat_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                     (raw, rate, fee_val, net, json.dumps(details), l_date, user_id, chat_id))
         conn.commit(); conn.close()
 
-        response = (
-            f"✅ **录入成功 (记录已保存)**\n"
-            f"💰 净值: `{net:,.2f}`\n"
-            f"📊 计算: `{raw:,.0f} / {rate} - {fee_val}%` \n"
-            f"━━━━━━━━━━━━━━━\n"
-            + "\n".join(line_summaries) + "\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"⏳ 剩余有效期: {time_left}"
-        )
+        response = (f"✅ **录入成功**\n💰 净值: `{net:,.2f}`\n📊 计算: `{raw:,.0f}/{rate}-{fee_val}%` \n━━━━━━━━━━━━━━━\n" + "\n".join(line_summaries) + f"\n━━━━━━━━━━━━━━━\n⏳ 剩余: {time_left}")
         await update.message.reply_text(response, parse_mode='Markdown')
     except: pass
 
 if __name__ == '__main__':
     init_db()
     app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
+    app.add_handler(CommandHandler("undo", undo)) # เพิ่ม Undo
     app.add_handler(CommandHandler("set_days", set_days))
     app.add_handler(CommandHandler("set_tz", set_tz))
     app.add_handler(CommandHandler("report", report))
