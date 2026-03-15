@@ -50,9 +50,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             grand_raw += raw_val
             grand_net += net_val
             
-            msg += f"📅 `{r['date']}`\n"
-            msg += f"▫️ 入金: `{net_val:,.2f}` U | (日元: `{raw_val:,.0f}`)\n"
-            msg += f"▫️ 计算: {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
+            msg += f"📅 {r['date']} \n"
+            msg += f"▫️入金 : {raw_val:,.0f}) 日元 | 入金 : {net_val:,.2f} U \n"
+            msg += f"▫️ 计算 : {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
             
             line_entries = []
             for d in r['details']:
@@ -72,7 +72,17 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 grand_comm += comm
             
             msg += f"└ 👤 {' | '.join(line_entries)}\n"
-            msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+            
+
+       
+
+        # --- Grand Total Section ---
+        msg += f"\n📊 **全月总计**\n"
+        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
+        msg += f"📥 **总入金 : ** {grand_net:,.2f} U\n"
+        msg += f"🧧 **总提成 : ** {grand_comm:,.2f} U\n"
+        msg += f"━━━━━━━━━━━━━━━"
 
         # --- Summary Section (รายคน - แยกตามสาย) ---
         msg += f"\n👤 **个人提成汇总**\n"
@@ -82,21 +92,13 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p_total_comm = 0
             for l_name, data in sorted(person_sum[name]['lines'].items()):
                 msg += f"   📍 {l_name}:\n"
-                msg += f"      ▫️ 入金(日元): `{data['raw']:,.0f}`\n"
-                msg += f"      ▫️ 入金(U): `{data['net']:,.2f}`\n"
-                msg += f"      ▫️ 提成: `{data['comm']:,.2f}`\n"
+                msg += f"      ▫️ 入金 : {data['raw']:,.0f} 日元\n"
+                msg += f"      ▫️ 入金 : {data['net']:,.2f} U\n"
+                msg += f"      ▫️ 提成 : {data['comm']:,.2f} U\n"
                 p_total_comm += data['comm']
             
-            msg += f"   💰 **总计提成: `{p_total_comm:,.2f}`**\n"
+            msg += f"   💰 **总计提成 : {p_total_comm:,.2f}** U\n"
             msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-
-        # --- Grand Total Section ---
-        msg += f"\n📊 **全月总计 (Grand Total)**\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"💰 **总入金 (日元):** `{grand_raw:,.0f}`\n"
-        msg += f"📥 **总入金 (U):** `{grand_net:,.2f}`\n"
-        msg += f"🧧 **总提成:** `{grand_comm:,.2f}`\n"
-        msg += f"━━━━━━━━━━━━━━━"
         
         await update.message.reply_text(msg, parse_mode='Markdown')
 
