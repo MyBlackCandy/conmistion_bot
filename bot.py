@@ -51,13 +51,13 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             grand_net += net_val
             
             msg += f"📅 {r['date']} \n"
-            msg += f"▫️入金 : {raw_val:,.0f}) 日元 | 入金 : {net_val:,.2f} U \n"
-            msg += f"▫️ 计算 : {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
+            msg += f"▫️入金 : {raw_val:,.0f} 日元 | 入金 : {net_val:,.2f} U \n"
+            msg += f"▫️计算 : {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
             
             line_entries = []
             for d in r['details']:
                 name, l_cn, comm = d['name'], get_line_name(d['line']), float(d['comm'])
-                line_entries.append(f"{name}({l_cn}): `{comm:,.2f}`")
+                line_entries.append(f"{name}({l_cn}) : {comm:,.2f}")
                 
                 if name not in person_sum:
                     person_sum[name] = {'lines': {}}
