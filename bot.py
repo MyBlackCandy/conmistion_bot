@@ -168,18 +168,47 @@ async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- อื่นๆ (set_days, set_tz, myid) ---
 async def set_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != os.getenv("MASTER_ID", "0"): return
+    # ตรวจสอบสิทธิ์ Master
+    if str(update.effective_user.id) != os.getenv("MASTER_ID", "0"): 
+        return
+    
     try:
-        chat_id, target_id, days = update.effective_chat.id, int(context.args[0]), float(context.args[1])
-        conn = get_db_connection(); cur = conn.cursor()
+        # รับค่าจาก Command: /set_days [target_id] [days]
+        chat_id = update.effective_chat.id
+        target_id = int(context.args[0])
+        days = float(context.args[1])
+        
+        # ใช้ UTC เป็นแกนกลาง ไม่มีการบวก/ลบ offset ใดๆ ในขั้นตอนนี้
+        now_utc = datetime.now(timezone.utc)
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # ตรวจสอบวันหมดอายุเดิม
         cur.execute("SELECT expiry_timestamp FROM group_permissions WHERE chat_id=%s AND user_id=%s", (chat_id, target_id))
         res = cur.fetchone()
-        base = res[0] if res and res[0] and res[0] > datetime.now(timezone.utc) else datetime.now(timezone.utc)
+        
+        # ถ้ามีวันหมดอายุเดิมและยังไม่หมด ให้ต่อจากของเดิม ถ้าไม่มีให้เริ่มจากตอนนี้
+        base = res[0] if res and res[0] and res[0] > now_utc else now_utc
         new_exp = base + timedelta(days=days)
-        cur.execute("INSERT INTO group_permissions (chat_id, user_id, role, expiry_timestamp) VALUES (%s,%s,'user',%s) ON CONFLICT (chat_id, user_id) DO UPDATE SET expiry_timestamp=%s", (chat_id, target_id, new_exp, new_exp))
-        conn.commit(); conn.close()
-        await update.message.reply_text(f"✅ 成功 | {new_exp.strftime('%Y-%m-%d')}")
-    except: pass
+        
+        # บันทึกค่าลง Database (บันทึกเป็น Timestamp ตรงๆ)
+        cur.execute("""
+            INSERT INTO group_permissions (chat_id, user_id, role, expiry_timestamp) 
+            VALUES (%s, %s, 'user', %s) 
+            ON CONFLICT (chat_id, user_id) 
+            DO UPDATE SET expiry_timestamp = %s, role = 'staff'
+        """, (chat_id, target_id, new_exp, new_exp))
+        
+        conn.commit()
+        conn.close()
+        
+        # แสดงผลลัพธ์การบันทึก
+        await update.message.reply_text(f"✅ 授权成功 (บันทึกสิทธิ์สำเร็จ)\n到期时间: `{new_exp.strftime('%Y-%m-%d %H:%M:%S')}` (UTC)")
+        
+    except Exception as e:
+        print(f"Set Days Error: {e}")
+        await update.message.reply_text("💡 格式: `/set_days [用户ID] [天数]`")
 
 async def set_tz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != os.getenv("MASTER_ID", "0"): return
@@ -196,7 +225,7 @@ if __name__ == '__main__':
     init_db()
     app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
     app.add_handler(CommandHandler("undo", undo))
-    app.add_handler(CommandHandler("set_days", set_days))
+    app.add_handler(CommandHandler("add_user", set_days))
     app.add_handler(CommandHandler("set_tz", set_tz))
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("myid", lambda u,c: u.message.reply_text(f"ID: `{u.effective_user.id}`\nChat: `{u.effective_chat.id}`")))
