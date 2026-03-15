@@ -61,36 +61,57 @@ async def set_tz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
     active, _, tz_off = get_status(user_id, chat_id)
+    
+    # เฉพาะ Master หรือคนที่มีสิทธิ์ในกลุ่มถึงจะดูได้
     if not active and str(user_id) != os.getenv("MASTER_ID", "0"): return
 
+    # กำหนดเดือนปัจจุบันตาม Timezone ของกลุ่ม
     month = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m")
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    # 严格根据 chat_id 筛选数据
-    cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month}%"))
-    rows = cur.fetchall(); conn.close()
     
-    if not rows: return await update.message.reply_text(f"📊 {month} | 本群暂无记录")
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month}%"))
+    rows = cur.fetchall()
+    conn.close()
+    
+    if not rows: 
+        return await update.message.reply_text(f"📊 {month} | 暂无记录 (暫無記錄)")
 
-    hist = f"📋 **{month} 群记录**\n{'━'*15}\n"
-    summary = f"\n👤 **个人汇总**\n{'━'*15}\n"
+    hist_header = f"📋 **{month} 财务记录 (历史)**\n{'━'*15}\n"
+    summ_header = f"\n👤 **个人汇总 (总结)**\n{'━'*15}\n"
+    
+    hist_body = ""
     person_sum = {}
 
+    # --- ส่วนที่ 1: ประวัติการบันทึก (2 บรรทัดต่อรายการ) ---
     for r in rows:
-        hist += f"🔹 `{r['date']}` | {float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}% = **{float(r['net_amount']):,.2f}**\n"
-        lines = []
+        # บรรทัดที่ 1: วันที่ | สูตรคำนวณ = ยอดสุทธิ
+        hist_body += f"🔹 `{r['date']}` | {float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}% = **{float(r['net_amount']):,.2f}**\n"
+        
+        line_entries = []
         for d in r['details']:
-            lines.append(f"{d['name']}(L{d['line']}):{float(d['comm']):,.0f}")
-            if d['name'] not in person_sum: person_sum[d['name']] = {}
-            p_dict = person_sum[d['name']]
-            p_dict[f"L{d['line']}"] = p_dict.get(f"L{d['line']}", 0) + float(d['comm'])
-        hist += f"└ {', '.join(lines)}\n───\n"
+            name, l_no, comm = d['name'], d['line'], float(d['comm'])
+            line_entries.append(f"{name}(L{l_no}):{comm:,.0f}")
+            
+            # เก็บข้อมูลไว้สรุปรายคน
+            if name not in person_sum: person_sum[name] = {}
+            person_sum[name][f"L{l_no}"] = person_sum[name].get(f"L{l_no}", 0) + comm
+        
+        # บรรทัดที่ 2: รายชื่อสายงานทั้งหมดในดีลนี้
+        hist_body += f"└ {', '.join(line_entries)}\n"
 
-    for name, lines in sorted(person_sum.items()):
-        total = sum(lines.values())
-        summary += f"📌 **{name}** | 总计: `{total:,.2f}`\n"
-        summary += f"└ {', '.join([f'{k}: {v:,.2f}' for k, v in sorted(lines.items())])}\n───\n"
-    
-    await update.message.reply_text(hist + summary, parse_mode='Markdown')
+    # --- ส่วนที่ 2: สรุปรายคน (2 บรรทัดต่อคน) ---
+    summ_body = ""
+    for name in sorted(person_sum.keys()):
+        total_amt = sum(person_sum[name].values())
+        # บรรทัดที่ 1: ชื่อ | ยอดรวม
+        summ_body += f"📌 **{name}** | 总计: `{total_amt:,.2f}`\n"
+        
+        # บรรทัดที่ 2: รายละเอียดแต่ละ Line
+        lines_info = [f"{l}:{v:,.2f}" for l, v in sorted(person_sum[name].items())]
+        summ_body += f"└ {', '.join(lines_info)}\n"
+
+    await update.message.reply_text(hist_header + hist_body + summ_header + summ_body, parse_mode='Markdown')
 
 # --- 记录处理 ---
 async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,25 +119,53 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active, time_left, tz_off = get_status(user_id, chat_id)
     
     if not active:
-        # 如果是普通消息且没授权，不回复以防打扰
-        return 
+        return # 无权限时不回复
 
     text = update.message.text.strip()
     if not text.startswith('+'): return
     
     try:
         p = text[1:].split()
-        raw, rate, fee = float(p[0]), float(p[1]), float(p[2].replace('%',''))
-        net = (raw / rate) * (1 - (fee/100))
-        details = [{"line": i//2+1, "name": p[3+i], "comm": net*(float(p[4+i].replace('%',''))/100)} for i in range(0, len(p[3:]), 2)]
+        # [0]=ยอดดิบ, [1]=เรท, [2]=ค่าธรรมเนียม
+        raw, rate, fee_val = float(p[0]), float(p[1]), float(p[2].replace('%',''))
+        net = (raw / rate) * (1 - (fee_val/100))
         
+        # คำนวณรายละเอียดสายงานแบบ Dynamic
+        details = []
+        line_summaries = []
+        # เริ่มวนลูปจากตำแหน่งที่ 3 (ชื่อคนแรก)
+        for i in range(0, len(p[3:]), 2):
+            line_no = (i//2) + 1
+            name = p[3+i]
+            comm_p = float(p[4+i].replace('%',''))
+            comm_amt = net * (comm_p / 100)
+            
+            details.append({"line": line_no, "name": name, "comm": comm_amt})
+            line_summaries.append(f"👤 {name} (L{line_no}): `{comm_amt:,.2f}`")
+        
+        # บันทึกลงฐานข้อมูล
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("INSERT INTO sales (raw_amount, ex_rate, fee, net_amount, details, date, added_by, chat_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (raw, rate, fee, net, json.dumps(details), l_date, user_id, chat_id))
+                    (raw, rate, fee_val, net, json.dumps(details), l_date, user_id, chat_id))
         conn.commit(); conn.close()
-        await update.message.reply_text(f"✅ 录入成功 | 净值: **{net:,.2f}**\n⏳ 剩余有效期: {time_left}", parse_mode='Markdown')
-    except: pass # 格式错误静默处理
+
+        # --- ส่วนแสดงผลตอบกลับหลังบันทึก ---
+        response = (
+            f"✅ **录入成功 (记录已保存)**\n"
+            f"💰 净值: `{net:,.2f}`\n"
+            f"📊 计算: `{raw:,.0f} / {rate} - {fee_val}%` \n"
+            f"━━━━━━━━━━━━━━━\n"
+            + "\n".join(line_summaries) + "\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"⏳ 剩余有效期: {time_left}"
+        )
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+
+    except Exception as e:
+        # หากเกิดข้อผิดพลาดในการคำนวณหรือรูปแบบไม่ถูกต้อง บอทจะเงียบไว้เพื่อไม่ให้กวนการสนทนา
+        pass
 
 if __name__ == '__main__':
     init_db()
