@@ -51,13 +51,13 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             grand_net += net_val
             
             msg += f"📅 {r['date']} \n"
-            msg += f"▫️入金 : {raw_val:,.0f} 日元 | 入金 : {net_val:,.2f} U \n"
+            msg += f"▫️入金 : {raw_val:,.0f} 日元 | 入金 : {net_val:,.0f} U \n"
             msg += f"▫️计算 : {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
             
             line_entries = []
             for d in r['details']:
                 name, l_cn, comm = d['name'], get_line_name(d['line']), float(d['comm'])
-                line_entries.append(f"{name}({l_cn}) : {comm:,.2f}")
+                line_entries.append(f"{name}({l_cn}) : {comm:,.0f}")
                 
                 if name not in person_sum:
                     person_sum[name] = {'lines': {}}
@@ -82,11 +82,11 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for l_name, data in sorted(person_sum[name]['lines'].items()):
                 msg += f"   📍 {l_name}:\n"
                 msg += f"      ▫️ 入金 : {data['raw']:,.0f} 日元\n"
-                msg += f"      ▫️ 入金 : {data['net']:,.2f} U\n"
-                msg += f"      ▫️ 提成 : {data['comm']:,.2f} U\n"
+                msg += f"      ▫️ 入金 : {data['net']:,.0f} U\n"
+                msg += f"      ▫️ 提成 : {data['comm']:,.0f} U\n"
                 p_total_comm += data['comm']
             
-            msg += f"   💰 **总计提成 : {p_total_comm:,.2f}** U\n"
+            msg += f"   💰 **总计提成 : {p_total_comm:,.0f}** U\n"
             msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
        
 
@@ -94,8 +94,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"\n📊 **全月总计**\n"
         msg += f"━━━━━━━━━━━━━━━\n"
         msg += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
-        msg += f"📥 **总入金 : ** {grand_net:,.2f} U\n"
-        msg += f"🧧 **总提成 : ** {grand_comm:,.2f} U\n"
+        msg += f"📥 **总入金 : ** {grand_net:,.0f} U\n"
+        msg += f"🧧 **总提成 : ** {grand_comm:,.0f} U\n"
         msg += f"━━━━━━━━━━━━━━━"
 
        
@@ -124,7 +124,7 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name, comm_p = p[3+i], float(p[4+i].replace('%',''))
             comm_amt, l_cn = net * (comm_p / 100), get_line_name(line_no)
             details.append({"line": line_no, "name": name, "comm": comm_amt})
-            line_summaries.append(f"   {l_cn} | {name} : {comm_amt:,.2f} U")
+            line_summaries.append(f"   {l_cn} | {name} : {comm_amt:,.0f} U")
         
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
         conn = get_db_connection(); cur = conn.cursor()
@@ -136,7 +136,7 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ **登记成功**\n"
             f"━━━━━━━━━━━━━━━\n"
             f"📊 公式 : {raw:,.0f} 日元 ÷ 汇率 {rate} - 车费 {fee_val}% \n"
-            f"💰 净入 : {net:,.2f} U\n"
+            f"💰 净入 : {net:,.0f} U\n"
             f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
             + "\n".join(line_summaries) + 
             f"\n━━━━━━━━━━━━━━━\n"
