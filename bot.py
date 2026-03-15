@@ -39,14 +39,14 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not rows: return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
 
         # --- Header ---
-        msg = f"📋 **{month_display} 提成报表**\n"
+        msg = f"📋 **{month_display} 入金报表**\n"
         msg += f"━━━━━━━━━━━━━━━\n\n"
         
         person_sum = {}
         for r in rows:
             # รายการบันทึก
-            msg += f"🗓 `{r['date']}`\n"
-            msg += f"💰 `Net: {float(r['net_amount']):,.2f}` | ({float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}%)\n"
+            msg += f"🗓 {r['date']}\n"
+            msg += f"💰 入金U: {float(r['net_amount']):,.2f} | ({float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}%)\n"
             
             line_entries = []
             for d in r['details']:
@@ -55,19 +55,19 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if name not in person_sum: person_sum[name] = {}
                 person_sum[name][l_cn] = person_sum[name].get(l_cn, 0) + comm
             
-            msg += f"└ 👤 {', '.join(line_entries)}\n"
+            msg += f"└ 👤 {' | '.join(line_entries)}\n"
             msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
 
         # --- Summary Section ---
-        msg += f"\n👤 **个人汇总 (Total Summary)**\n"
+        msg += f"\n👤 **个人提成**\n"
         msg += f"━━━━━━━━━━━━━━━\n"
         
         for name in sorted(person_sum.keys()):
             total = sum(person_sum[name].values())
             msg += f"📌 **{name}**\n"
-            msg += f"   Total: `{total:,.2f}`\n"
+            msg += f"   Total: {total:,.2f}\n"
             lines_info = [f"{l}: {v:,.2f}" for l, v in sorted(person_sum[name].items())]
-            msg += f"   └ {', '.join(lines_info)}\n"
+            msg += f"   └ {' | '.join(lines_info)}\n"
         
         msg += f"━━━━━━━━━━━━━━━"
         await update.message.reply_text(msg, parse_mode='Markdown')
