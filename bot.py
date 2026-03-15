@@ -73,18 +73,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             msg += f"└ 👤 {' | '.join(line_entries)}\n"
             
-
-       
-
-        # --- Grand Total Section ---
-        msg += f"\n📊 **全月总计**\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
-        msg += f"📥 **总入金 : ** {grand_net:,.2f} U\n"
-        msg += f"🧧 **总提成 : ** {grand_comm:,.2f} U\n"
-        msg += f"━━━━━━━━━━━━━━━"
-
-        # --- Summary Section (รายคน - แยกตามสาย) ---
+         # --- Summary Section (รายคน - แยกตามสาย) ---
         msg += f"\n👤 **个人提成汇总**\n"
         msg += f"━━━━━━━━━━━━━━━\n"
         for name in sorted(person_sum.keys()):
@@ -99,6 +88,17 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             msg += f"   💰 **总计提成 : {p_total_comm:,.2f}** U\n"
             msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+       
+
+        # --- Grand Total Section ---
+        msg += f"\n📊 **全月总计**\n"
+        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
+        msg += f"📥 **总入金 : ** {grand_net:,.2f} U\n"
+        msg += f"🧧 **总提成 : ** {grand_comm:,.2f} U\n"
+        msg += f"━━━━━━━━━━━━━━━"
+
+       
         
         await update.message.reply_text(msg, parse_mode='Markdown')
 
