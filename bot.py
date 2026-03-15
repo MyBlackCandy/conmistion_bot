@@ -124,7 +124,7 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name, comm_p = p[3+i], float(p[4+i].replace('%',''))
             comm_amt, l_cn = net * (comm_p / 100), get_line_name(line_no)
             details.append({"line": line_no, "name": name, "comm": comm_amt})
-            line_summaries.append(f"   {l_cn} | {name}: `{comm_amt:,.2f}`")
+            line_summaries.append(f"   {l_cn} | {name} : {comm_amt:,.2f} U")
         
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
         conn = get_db_connection(); cur = conn.cursor()
@@ -133,14 +133,14 @@ async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit(); conn.close()
 
         res_msg = (
-            f"✅ **录入成功**\n"
+            f"✅ **登记成功**\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"📊 公式: `{raw:,.0f} ÷ {rate} - {fee_val}%` \n"
-            f"💰 净入: `{net:,.2f}`\n"
+            f"📊 公式 : {raw:,.0f} 日元 ÷ 汇率 {rate} - 车费 {fee_val}% \n"
+            f"💰 净入 : {net:,.2f} U\n"
             f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
             + "\n".join(line_summaries) + 
             f"\n━━━━━━━━━━━━━━━\n"
-            f"⏳ 授权剩余: {time_left}"
+          
         )
         await update.message.reply_text(res_msg, parse_mode='Markdown')
         await report(update, context)
