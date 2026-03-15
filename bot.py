@@ -38,38 +38,66 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not rows: return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
 
-        # --- Header ---
         msg = f"📋 **{month_display} 入金报表**\n"
         msg += f"━━━━━━━━━━━━━━━\n\n"
         
-        person_sum = {}
+        person_sum = {} # โครงสร้าง: { 'Name': { 'lines': { '一线': {'raw':0, 'net':0, 'comm':0} } } }
+        grand_raw, grand_net, grand_comm = 0, 0, 0
+        
         for r in rows:
-            # รายการบันทึก
-            msg += f"{r['date']}\n"
-            msg += f"     入金U: {float(r['net_amount']):,.2f} | ({float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}%)\n"
+            net_val = float(r['net_amount'])
+            raw_val = float(r['raw_amount'])
+            grand_raw += raw_val
+            grand_net += net_val
+            
+            msg += f"📅 `{r['date']}`\n"
+            msg += f"▫️ 入金: `{net_val:,.2f}` U | (日元: `{raw_val:,.0f}`)\n"
+            msg += f"▫️ 计算: {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
             
             line_entries = []
             for d in r['details']:
                 name, l_cn, comm = d['name'], get_line_name(d['line']), float(d['comm'])
-                line_entries.append(f"{name}({l_cn}) : {comm:,.2f}")
-                if name not in person_sum: person_sum[name] = {}
-                person_sum[name][l_cn] = person_sum[name].get(l_cn, 0) + comm
+                line_entries.append(f"{name}({l_cn}): `{comm:,.2f}`")
+                
+                if name not in person_sum:
+                    person_sum[name] = {'lines': {}}
+                
+                if l_cn not in person_sum[name]['lines']:
+                    person_sum[name]['lines'][l_cn] = {'raw': 0, 'net': 0, 'comm': 0}
+                
+                # สะสมยอดแยกตามสายของแต่ละคน
+                person_sum[name]['lines'][l_cn]['raw'] += raw_val
+                person_sum[name]['lines'][l_cn]['net'] += net_val
+                person_sum[name]['lines'][l_cn]['comm'] += comm
+                grand_comm += comm
             
-            msg += f"     {' | '.join(line_entries)}\n"
-           
+            msg += f"└ 👤 {' | '.join(line_entries)}\n"
+            msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
 
-        # --- Summary Section ---
-        msg += f"\n👤**个人提成**\n"
+        # --- Summary Section (รายคน - แยกตามสาย) ---
+        msg += f"\n👤 **个人提成汇总**\n"
         msg += f"━━━━━━━━━━━━━━━\n"
-        
         for name in sorted(person_sum.keys()):
-            total = sum(person_sum[name].values())
-            msg += f"📌 **{name}**"
-            msg += f" --->  总提成: {total:,.2f}\n"
-            lines_info = [f"{l} : {v:,.2f}" for l, v in sorted(person_sum[name].items())]
-            msg += f"{' | '.join(lines_info)}\n"
-        
+            msg += f"📌 **{name}**\n"
+            p_total_comm = 0
+            for l_name, data in sorted(person_sum[name]['lines'].items()):
+                msg += f"   📍 {l_name}:\n"
+                msg += f"      ▫️ 入金(日元): `{data['raw']:,.0f}`\n"
+                msg += f"      ▫️ 入金(U): `{data['net']:,.2f}`\n"
+                msg += f"      ▫️ 提成: `{data['comm']:,.2f}`\n"
+                p_total_comm += data['comm']
+            
+            msg += f"   💰 **总计提成: `{p_total_comm:,.2f}`**\n"
+            msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+
+        # --- Grand Total Section ---
+        msg += f"\n📊 **全月总计 (Grand Total)**\n"
+        msg += f"━━━━━━━━━━━━━━━\n"
+        msg += f"💰 **总入金 (日元):** `{grand_raw:,.0f}`\n"
+        msg += f"📥 **总入金 (U):** `{grand_net:,.2f}`\n"
+        msg += f"🧧 **总提成:** `{grand_comm:,.2f}`\n"
         msg += f"━━━━━━━━━━━━━━━"
+        
         await update.message.reply_text(msg, parse_mode='Markdown')
 
     except Exception as e:
