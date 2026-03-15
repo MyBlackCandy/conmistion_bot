@@ -46,7 +46,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for r in rows:
             # รายการบันทึก
             msg += f"{r['date']}\n"
-            msg += f"入金U: {float(r['net_amount']):,.2f} | ({float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}%)\n"
+            msg += f"     入金U: {float(r['net_amount']):,.2f} | ({float(r['raw_amount']):,.0f}/{r['ex_rate']}-{r['fee']}%)\n"
             
             line_entries = []
             for d in r['details']:
@@ -55,8 +55,8 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if name not in person_sum: person_sum[name] = {}
                 person_sum[name][l_cn] = person_sum[name].get(l_cn, 0) + comm
             
-            msg += f"{' | '.join(line_entries)}\n"
-            msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+            msg += f"     {' | '.join(line_entries)}\n"
+           
 
         # --- Summary Section ---
         msg += f"\n👤**个人提成**\n"
@@ -65,7 +65,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for name in sorted(person_sum.keys()):
             total = sum(person_sum[name].values())
             msg += f"📌 **{name}**"
-            msg += f"   总提成: {total:,.2f}\n"
+            msg += f" --->  总提成: {total:,.2f}\n"
             lines_info = [f"{l} : {v:,.2f}" for l, v in sorted(person_sum[name].items())]
             msg += f"{' | '.join(lines_info)}\n"
         
