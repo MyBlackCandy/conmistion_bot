@@ -72,25 +72,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 grand_comm += comm
             
             msg += f"└ 👤 {' | '.join(line_entries)}\n"
-            
-         # --- Summary Section (รายคน - แยกตามสาย) ---
-        msg += f"\n👤 **个人提成汇总**\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
-        for name in sorted(person_sum.keys()):
-            msg += f"📌 **{name}**\n"
-            p_total_comm = 0
-            for l_name, data in sorted(person_sum[name]['lines'].items()):
-                msg += f"   📍 {l_name}:\n"
-                msg += f"      ▫️ 入金 : {data['raw']:,.0f} 日元\n"
-                msg += f"      ▫️ 入金 : {data['net']:,.0f} U\n"
-                msg += f"      ▫️ 提成 : {data['comm']:,.0f} U\n"
-                p_total_comm += data['comm']
-            
-            msg += f"   💰 **总计提成 : {p_total_comm:,.0f}** U\n"
-            msg += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-       
 
-        # --- Grand Total Section ---
+
+         # --- Grand Total Section ---
         msg += f"\n📊 **全月总计**\n"
         msg += f"━━━━━━━━━━━━━━━\n"
         msg += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
@@ -98,9 +82,30 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"🧧 **总提成 : ** {grand_comm:,.0f} U\n"
         msg += f"━━━━━━━━━━━━━━━"
 
-       
+
+        await update.message.reply_text(msg_total, parse_mode='Markdown')
         
-        await update.message.reply_text(msg, parse_mode='Markdown')
+            
+         # --- Summary Section (รายคน - แยกตามสาย) ---
+        msg_summary = f"👤 **个人提成汇总**\n"
+        msg_summary += f"━━━━━━━━━━━━━━━\n"
+        
+        for name in sorted(person_sum.keys()):
+            msg_summary += f"📌 **{name}**\n"
+            p_total_comm = 0
+            
+            for l_name, data in sorted(person_sum[name]['lines'].items()):
+                msg_summary += f"    📍 {l_name}:\n"
+                msg_summary += f"      ■ 入金 : {data['raw']:,.0f} 日元\n"
+                msg_summary += f"      ■ 入金 : {data['net']:,.0f} U\n"
+                msg_summary += f"      ■ 提成 : {data['comm']:,.0f} U\n"
+                p_total_comm += data['comm']
+            
+            msg_summary += f"    💰 **总计提成 : {p_total_comm:,.0f} U**\n"
+            msg_summary += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+
+        # ส่งข้อความที่ 2 แยกต่างหาก
+        await update.message.reply_text(msg_summary, parse_mode='Markdown')
 
     except Exception as e:
         print(f"Report Error: {e}")
