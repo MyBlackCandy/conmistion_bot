@@ -32,16 +32,20 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     month_query, month_display = now_local.strftime("%Y-%m"), f"{now_local.year}年{now_local.month}月"
     
     try:
-        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT * FROM sales WHERE chat_id=%s AND date LIKE %s ORDER BY id ASC", (chat_id, f"{month_query}%"))
-        rows = cur.fetchall(); conn.close()
+        rows = cur.fetchall()
+        conn.close()
         
-        if not rows: return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
+        if not rows: 
+            return await update.message.reply_text(f"📊 {month_display} | 暂无记录")
 
-        msg = f"📋 **{month_display} 入金报表**\n"
-        msg += f"━━━━━━━━━━━━━━━\n\n"
+        # --- ส่วนที่ 1: เตรียมข้อความ รายละเอียดรายวัน + Grand Total ---
+        msg_total = f"📋 **{month_display} 入金报表**\n"
+        msg_total += f"━━━━━━━━━━━━━━━\n\n"
         
-        person_sum = {} # โครงสร้าง: { 'Name': { 'lines': { '一线': {'raw':0, 'net':0, 'comm':0} } } }
+        person_sum = {} 
         grand_raw, grand_net, grand_comm = 0, 0, 0
         
         for r in rows:
@@ -50,9 +54,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             grand_raw += raw_val
             grand_net += net_val
             
-            msg += f"📅 {r['date']} \n"
-            msg += f"▫️入金 : {raw_val:,.0f} 日元 | 入金 : {net_val:,.0f} U \n"
-            msg += f"▫️计算 : {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
+            msg_total += f"📅 {r['date']} \n"
+            msg_total += f"▫️入金 : {raw_val:,.0f} 日元 | {net_val:,.0f} U \n"
+            msg_total += f"▫️计算 : {raw_val:,.0f} ÷ {r['ex_rate']} - {r['fee']}%\n"
             
             line_entries = []
             for d in r['details']:
@@ -65,28 +69,25 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if l_cn not in person_sum[name]['lines']:
                     person_sum[name]['lines'][l_cn] = {'raw': 0, 'net': 0, 'comm': 0}
                 
-                # สะสมยอดแยกตามสายของแต่ละคน
                 person_sum[name]['lines'][l_cn]['raw'] += raw_val
                 person_sum[name]['lines'][l_cn]['net'] += net_val
                 person_sum[name]['lines'][l_cn]['comm'] += comm
                 grand_comm += comm
             
-            msg += f"└ 👤 {' | '.join(line_entries)}\n"
+            msg_total += f"└ 👤 {' | '.join(line_entries)}\n"
 
+        # เพิ่ม Grand Total ปิดท้ายข้อความแรก
+        msg_total += f"\n📊 **全月总计**\n"
+        msg_total += f"━━━━━━━━━━━━━━━\n"
+        msg_total += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
+        msg_total += f"📥 **总入金 : ** {grand_net:,.0f} U\n"
+        msg_total += f"🧧 **总提成 : ** {grand_comm:,.0f} U\n"
+        msg_total += f"━━━━━━━━━━━━━━━"
 
-         # --- Grand Total Section ---
-        msg += f"\n📊 **全月总计**\n"
-        msg += f"━━━━━━━━━━━━━━━\n"
-        msg += f"💰 **总入金 : ** {grand_raw:,.0f} 日元\n"
-        msg += f"📥 **总入金 : ** {grand_net:,.0f} U\n"
-        msg += f"🧧 **总提成 : ** {grand_comm:,.0f} U\n"
-        msg += f"━━━━━━━━━━━━━━━"
-
-
+        # ส่งข้อความที่ 1 (Daily + Grand Total)
         await update.message.reply_text(msg_total, parse_mode='Markdown')
         
-            
-         # --- Summary Section (รายคน - แยกตามสาย) ---
+        # --- ส่วนที่ 2: เตรียมข้อความ Summary Section (รายคน) ---
         msg_summary = f"👤 **个人提成汇总**\n"
         msg_summary += f"━━━━━━━━━━━━━━━\n"
         
@@ -104,7 +105,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg_summary += f"    💰 **总计提成 : {p_total_comm:,.0f} U**\n"
             msg_summary += f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
 
-        # ส่งข้อความที่ 2 แยกต่างหาก
+        # ส่งข้อความที่ 2 (Individual Summary)
         await update.message.reply_text(msg_summary, parse_mode='Markdown')
 
     except Exception as e:
