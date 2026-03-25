@@ -113,45 +113,71 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- 记录处理 (UI 优化版) ---
 async def handle_plus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, chat_id = update.effective_user.id, update.effective_chat.id
-    active, time_left, tz_off = get_status(user_id, chat_id)
+    active, _, tz_off = get_status(user_id, chat_id)
     if not active: return
+    
     text = update.message.text.strip()
     if not text.startswith('+'): return
     
     try:
         p = text[1:].split()
+        # ตรวจสอบว่าข้อมูลพื้นฐานครบ (raw, rate, fee)
+        if len(p) < 3: return
+
         raw, rate, fee_val = float(p[0]), float(p[1]), float(p[2].replace('%',''))
+        
+        # สูตรการคำนวณ: (ยอดเยน / เรท) - ค่าธรรมเนียมรถ
         net = (raw / rate) * (1 - (fee_val/100))
+        
         details, line_summaries = [], []
         
+        # วนลูปเก็บข้อมูลรายชื่อและ % คอมมิชชั่น
         for i in range(0, len(p[3:]), 2):
+            if i+1 >= len(p[3:]): break # กัน Error กรณีใส่ชื่อแต่ไม่ใส่ %
+            
             line_no = (i//2) + 1
             name, comm_p = p[3+i], float(p[4+i].replace('%',''))
-            comm_amt, l_cn = net * (comm_p / 100), get_line_name(line_no)
+            
+            # คำนวณยอดคอมมิชชั่นจากยอด Net (U)
+            comm_amt = net * (comm_p / 100)
+            l_cn = get_line_name(line_no)
+            
             details.append({"line": line_no, "name": name, "comm": comm_amt})
-            line_summaries.append(f"   {l_cn} | {name} : {comm_amt:,.0f} U")
+            line_summaries.append(f"    ■ {l_cn} | {name} : {comm_amt:,.0f} U")
         
+        # บันทึกลง Database
         l_date = datetime.now(timezone(timedelta(hours=tz_off))).strftime("%Y-%m-%d")
-        conn = get_db_connection(); cur = conn.cursor()
+        conn = get_db_connection()
+        cur = conn.cursor()
         cur.execute("""INSERT INTO sales (raw_amount, ex_rate, fee, net_amount, details, date, added_by, chat_id) 
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", (raw, rate, fee_val, net, json.dumps(details), l_date, user_id, chat_id))
-        conn.commit(); conn.close()
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", 
+                    (raw, rate, fee_val, net, json.dumps(details), l_date, user_id, chat_id))
+        conn.commit()
+        conn.close()
 
+        # สร้างข้อความยืนยันการลงบันทึก (Receipt)
         res_msg = (
-            f"✅ **登记成功**\n"
+            f"✅ **登记成功** (บันทึกสำเร็จ)\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"📊 公式 : {raw:,.0f} 日元 ÷ 汇率 {rate} - 车费 {fee_val}% \n"
-            f"💰 净入 : {net:,.0f} U\n"
+            f"📊 公式 : {raw:,.0f} 日元 ÷ {rate} - {fee_val}% \n"
+            f"💰 净入 : **{net:,.0f}** U\n"
             f"⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
             + "\n".join(line_summaries) + 
-            f"\n━━━━━━━━━━━━━━━\n"
-          
+            f"\n━━━━━━━━━━━━━━━"
         )
+        
+        # ส่งข้อความใบเสร็จ
         await update.message.reply_text(res_msg, parse_mode='Markdown')
+        
+        # เรียกฟังก์ชัน report เพื่อส่งข้อความสรุปแยกอีก 2 ข้อความ
         await report(update, context)
         
     except Exception as e:
         print(f"Handle Plus Error: {e}")
+        # กรณี Error อาจจะแจ้งเตือนผู้ใช้เล็กน้อย
+        # await update.message.reply_text("❌ รูปแบบข้อมูลไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง")
+
+
 
 # --- 撤销 Undo ---
 async def undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
